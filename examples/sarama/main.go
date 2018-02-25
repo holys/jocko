@@ -1,20 +1,17 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"os"
-	"time"
+
+	"testing"
 
 	"github.com/Shopify/sarama"
-	dynaport "github.com/travisjeffery/go-dynaport"
-	"github.com/travisjeffery/jocko/broker"
-	"github.com/travisjeffery/jocko/broker/config"
 	"github.com/travisjeffery/jocko/log"
-	"github.com/travisjeffery/jocko/mock"
 	"github.com/travisjeffery/jocko/protocol"
 	"github.com/travisjeffery/jocko/server"
+	"github.com/travisjeffery/jocko/testutil"
 )
 
 type check struct {
@@ -114,38 +111,47 @@ func main() {
 }
 
 func setup(logger log.Logger) func() {
-	ports := dynaport.Get(3)
-	config := &config.Config{
-		ID:              brokerID,
-		Bootstrap:       true,
-		BootstrapExpect: 1,
-		StartAsLeader:   true,
-		DataDir:         logDir + "/logs",
-		DevMode:         true,
-		Addr:            fmt.Sprintf("127.0.0.1:%d", ports[1]),
-		RaftAddr:        fmt.Sprintf("127.0.0.1:%d", ports[2]),
-	}
-	config.SerfLANConfig.MemberlistConfig.BindAddr = "127.0.0.1"
-	config.SerfLANConfig.MemberlistConfig.BindPort = ports[1]
-	config.SerfLANConfig.MemberlistConfig.AdvertiseAddr = "127.0.0.1"
-	config.SerfLANConfig.MemberlistConfig.AdvertisePort = ports[1]
-	config.SerfLANConfig.MemberlistConfig.SuspicionMult = 2
-	config.SerfLANConfig.MemberlistConfig.ProbeTimeout = 50 * time.Millisecond
-	config.SerfLANConfig.MemberlistConfig.ProbeInterval = 100 * time.Millisecond
-	config.SerfLANConfig.MemberlistConfig.GossipInterval = 100 * time.Millisecond
-	broker, err := broker.New(config, logger)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed starting broker: %v\n", err)
+	// ports := dynaport.Get(3)
+	// config := &config.Config{
+	// 	ID:              brokerID,
+	// 	Bootstrap:       true,
+	// 	BootstrapExpect: 1,
+	// 	StartAsLeader:   true,
+	// 	DataDir:         logDir + "/logs",
+	// 	DevMode:         true,
+	// 	Addr:            fmt.Sprintf("127.0.0.1:%d", ports[1]),
+	// 	RaftAddr:        fmt.Sprintf("127.0.0.1:%d", ports[2]),
+	// }
+	// config.SerfLANConfig.MemberlistConfig.BindAddr = "127.0.0.1"
+	// config.SerfLANConfig.MemberlistConfig.BindPort = ports[1]
+	// config.SerfLANConfig.MemberlistConfig.AdvertiseAddr = "127.0.0.1"
+	// config.SerfLANConfig.MemberlistConfig.AdvertisePort = ports[1]
+	// config.SerfLANConfig.MemberlistConfig.SuspicionMult = 2
+	// config.SerfLANConfig.MemberlistConfig.ProbeTimeout = 50 * time.Millisecond
+	// config.SerfLANConfig.MemberlistConfig.ProbeInterval = 100 * time.Millisecond
+	// config.SerfLANConfig.MemberlistConfig.GossipInterval = 100 * time.Millisecond
+	// broker, err := broker.New(config, logger)
+	// if err != nil {
+	// 	fmt.Fprintf(os.Stderr, "failed starting broker: %v\n", err)
+	// 	os.Exit(1)
+	// }
+
+	// srv := server.New(&server.Config{BrokerAddr: brokerAddr, HTTPAddr: httpAddr}, broker, mock.NewMetrics(), logger)
+	// if err := srv.Start(context.Background()); err != nil {
+	// 	fmt.Fprintf(os.Stderr, "failed starting server: %v\n", err)
+	// 	os.Exit(1)
+	// }
+
+	c := testutil.NewTestCluster(&testing.T{}, &testutil.TestClusterOptions{
+		NumServers: 1,
+		TempDir:    logDir + "/logs",
+	})
+	if err := c.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to start cluster: %v\n", err)
 		os.Exit(1)
 	}
 
-	srv := server.New(&server.Config{BrokerAddr: brokerAddr, HTTPAddr: httpAddr}, broker, mock.NewMetrics(), logger)
-	if err := srv.Start(context.Background()); err != nil {
-		fmt.Fprintf(os.Stderr, "failed starting server: %v\n", err)
-		os.Exit(1)
-	}
-
-	addr, err := net.ResolveTCPAddr("tcp", brokerAddr)
+	addr, err := net.ResolveTCPAddr("tcp", c.Servers[0].Addr().String())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to resolve addr: %v\n", err)
 		os.Exit(1)

@@ -376,15 +376,20 @@ func TestBroker_Run(t *testing.T) {
 			config.Bootstrap = true
 			config.BootstrapExpect = 1
 			config.StartAsLeader = true
+
 			defer os.RemoveAll(dir)
+
 			logger := log.New().With(log.String("test", tt.name))
+
 			b, err := New(config, logger)
 			require.NoError(t, err)
 			require.NotNil(t, b)
+
 			defer func() {
 				b.Leave()
 				b.Shutdown()
 			}()
+
 			retry.Run(t, func(r *retry.R) {
 				if len(b.brokerLookup.Brokers()) != 1 {
 					r.Fatal("server not added")
