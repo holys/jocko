@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"os"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Shopify/sarama"
 	"github.com/travisjeffery/jocko/jocko"
+	"github.com/travisjeffery/jocko/jocko/config"
 	"github.com/travisjeffery/jocko/log"
 	"github.com/travisjeffery/jocko/protocol"
 )
@@ -29,9 +31,20 @@ const (
 	raftAddr      = "127.0.0.1:9093"
 	serfAddr      = "127.0.0.1:9094"
 	httpAddr      = "127.0.0.1:9095"
-	logDir        = "logdir"
 	brokerID      = 0
 )
+
+var (
+	logDir string
+)
+
+func init() {
+	var err error
+	logDir, err = ioutil.TempDir("/tmp", "jocko-client-test")
+	if err != nil {
+		panic(err)
+	}
+}
 
 func main() {
 	logger := log.New()
@@ -142,7 +155,11 @@ func setup(logger log.Logger) func() {
 	// 	os.Exit(1)
 	// }
 
-	c := jocko.NewTestServer(&testing.T{}, nil, nil)
+	c := jocko.NewTestServer(&testing.T{}, func(cfg *config.BrokerConfig) {
+		cfg.Bootstrap = true
+		cfg.BootstrapExpect = 1
+		cfg.StartAsLeader = true
+	}, nil)
 	if err := c.Start(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start cluster: %v\n", err)
 		os.Exit(1)
