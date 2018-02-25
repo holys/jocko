@@ -1,4 +1,4 @@
-package testutil
+package jocko
 
 import (
 	"fmt"
@@ -9,10 +9,8 @@ import (
 
 	"github.com/mitchellh/go-testing-interface"
 	dynaport "github.com/travisjeffery/go-dynaport"
-	"github.com/travisjeffery/jocko/broker"
-	"github.com/travisjeffery/jocko/broker/config"
+	"github.com/travisjeffery/jocko/jocko/config"
 	"github.com/travisjeffery/jocko/log"
-	"github.com/travisjeffery/jocko/server"
 )
 
 var (
@@ -29,11 +27,11 @@ func init() {
 	}
 }
 
-func NewTestServer(t testing.T, cbBroker func(cfg *config.Config), cbServer func(cfg *server.Config)) *server.Server {
+func NewTestServer(t testing.T, cbBroker func(cfg *config.BrokerConfig), cbServer func(cfg *ServerConfig)) *Server {
 	ports := dynaport.GetS(4)
 	nodeID := atomic.AddInt32(&nodeNumber, 1)
 
-	brokerConfig := config.DefaultConfig()
+	brokerConfig := config.DefaultBrokerConfig()
 	brokerConfig.DataDir = filepath.Join(tempDir, fmt.Sprintf("node%d", nodeID))
 	brokerConfig.Addr = "127.0.0.1:" + ports[0]
 	brokerConfig.RaftAddr = "127.0.0.1:" + ports[1]
@@ -56,12 +54,12 @@ func NewTestServer(t testing.T, cbBroker func(cfg *config.Config), cbServer func
 		cbBroker(brokerConfig)
 	}
 
-	b, err := broker.New(brokerConfig, logger)
+	b, err := NewBroker(brokerConfig, logger)
 	if err != nil {
 		t.Fatalf("err != nil: %s", err)
 	}
 
-	serverConfig := &server.Config{
+	serverConfig := &ServerConfig{
 		BrokerAddr: brokerConfig.Addr,
 		HTTPAddr:   "127.0.0.1:" + ports[3],
 	}
@@ -70,14 +68,14 @@ func NewTestServer(t testing.T, cbBroker func(cfg *config.Config), cbServer func
 		cbServer(serverConfig)
 	}
 
-	return server.New(serverConfig, b, nil, logger)
+	return NewServer(serverConfig, b, nil, logger)
 }
 
-func TestJoin(t testing.T, s1 *server.Server, other ...*server.Server) {
+func TestJoin(t testing.T, s1 *Server, other ...*Server) {
 	addr := fmt.Sprintf("127.0.0.1:%d",
-		s1.config.SerfConfig.MemberlistConfig.BindPort)
+		s1.broker.config.SerfLANConfig.MemberlistConfig.BindPort)
 	for _, s2 := range other {
-		if num, err := s2.Join([]string{addr}); err != nil {
+		if num, err := s2.broker.serf.Join([]string{addr}, true); err != nil {
 			t.Fatalf("err: %v", err)
 		} else if num != 1 {
 			t.Fatalf("bad: %d", num)

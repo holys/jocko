@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -8,10 +9,9 @@ import (
 	"testing"
 
 	"github.com/Shopify/sarama"
+	"github.com/travisjeffery/jocko/jocko"
 	"github.com/travisjeffery/jocko/log"
 	"github.com/travisjeffery/jocko/protocol"
-	"github.com/travisjeffery/jocko/server"
-	"github.com/travisjeffery/jocko/testutil"
 )
 
 type check struct {
@@ -142,16 +142,13 @@ func setup(logger log.Logger) func() {
 	// 	os.Exit(1)
 	// }
 
-	c := testutil.NewTestCluster(&testing.T{}, &testutil.TestClusterOptions{
-		NumServers: 1,
-		TempDir:    logDir + "/logs",
-	})
-	if err := c.Start(); err != nil {
+	c := jocko.NewTestServer(&testing.T{}, nil, nil)
+	if err := c.Start(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start cluster: %v\n", err)
 		os.Exit(1)
 	}
 
-	addr, err := net.ResolveTCPAddr("tcp", c.Servers[0].Addr().String())
+	addr, err := net.ResolveTCPAddr("tcp", c.Addr().String())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to resolve addr: %v\n", err)
 		os.Exit(1)
@@ -162,7 +159,7 @@ func setup(logger log.Logger) func() {
 		os.Exit(1)
 	}
 
-	client := server.NewClient(conn)
+	client := jocko.NewClient(conn)
 	resp, err := client.CreateTopics("cmd/createtopic", &protocol.CreateTopicRequests{
 		Requests: []*protocol.CreateTopicRequest{{
 			Topic:             topic,
