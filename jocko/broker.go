@@ -740,7 +740,7 @@ func (b *Broker) buildPartitions(topic string, partitionsCount int32, replicatio
 	brokers := b.brokerLookup.Brokers()
 	count := len(brokers)
 
-	// circular/ring is dope af
+	// container/ring is dope af
 	r := ring.New(count)
 	for i := 0; i < r.Len(); i++ {
 		r.Value = brokers[i]
@@ -750,6 +750,7 @@ func (b *Broker) buildPartitions(topic string, partitionsCount int32, replicatio
 	var partitions []structs.Partition
 
 	for i := int32(0); i < partitionsCount; i++ {
+		// TODO: maybe just go next here too
 		r = r.Move(rand.Intn(count))
 		leader := r.Value.(*metadata.Broker)
 		replicas := []int32{leader.ID.Int32()}
