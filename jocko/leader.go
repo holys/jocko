@@ -2,10 +2,12 @@ package jocko
 
 import (
 	"fmt"
+	"math/rand"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb"
 	"github.com/hashicorp/serf/serf"
@@ -13,6 +15,7 @@ import (
 	"github.com/travisjeffery/jocko/jocko/metadata"
 	"github.com/travisjeffery/jocko/jocko/structs"
 	"github.com/travisjeffery/jocko/log"
+	"github.com/travisjeffery/jocko/protocol"
 )
 
 // setupRaft is used to setup and initialize Raft.
@@ -38,7 +41,7 @@ func (s *Broker) setupRaft() error {
 	}
 	s.raftTransport = trans
 
-	s.config.RaftConfig.LocalID = raft.ServerID(s.config.RaftAddr)
+	s.config.RaftConfig.LocalID = raft.ServerID(s.config.ID)
 	s.config.RaftConfig.StartAsLeader = s.config.StartAsLeader
 
 	// build an in-memory setup for dev mode, disk-based otherwise.
@@ -241,7 +244,7 @@ func (s *Broker) handleAliveMember(m serf.Member) error {
 		}
 	}
 	state := s.fsm.State()
-	_, node, err := state.GetNode(b.ID.String())
+	_, node, err := state.GetNode(b.ID.Int32())
 	if err != nil {
 		return err
 	}
@@ -252,7 +255,7 @@ func (s *Broker) handleAliveMember(m serf.Member) error {
 	s.logger.Info("member joined, marking health alive", log.Any("member", m))
 	req := structs.RegisterNodeRequest{
 		Node: structs.Node{
-			Node:    fmt.Sprintf("%s", b.ID),
+			Node:    b.ID.Int32(),
 			Address: b.BrokerAddr,
 			Meta: map[string]string{
 				"raft_addr":     b.RaftAddr,
@@ -260,7 +263,7 @@ func (s *Broker) handleAliveMember(m serf.Member) error {
 				"name":          b.Name,
 			},
 			Check: &structs.HealthCheck{
-				Node:    b.RaftAddr,
+				Node:    b.ID.String(),
 				CheckID: structs.SerfCheckID,
 				Name:    structs.SerfCheckName,
 				Status:  structs.HealthPassing,
@@ -290,13 +293,13 @@ func (s *Broker) handleLeftMember(m serf.Member) error {
 
 // handleDeregisterMember is used to deregister a mmeber for a given reason.
 func (s *Broker) handleDeregisterMember(reason string, member serf.Member) error {
-	if member.Name == s.config.RaftAddr {
-		s.logger.Debug("deregistering self should be done by follower")
+	meta, ok := metadata.IsBroker(member)
+	if !ok {
 		return nil
 	}
 
-	meta, ok := metadata.IsBroker(member)
-	if !ok {
+	if meta.ID.Int32() == s.config.ID {
+		s.logger.Debug("deregistering self should be done by follower")
 		return nil
 	}
 
@@ -305,7 +308,7 @@ func (s *Broker) handleDeregisterMember(reason string, member serf.Member) error
 	}
 
 	state := s.fsm.State()
-	_, node, err := state.GetNode(meta.RaftAddr)
+	_, node, err := state.GetNode(meta.ID.Int32())
 	if err != nil {
 		return err
 	}
@@ -313,9 +316,9 @@ func (s *Broker) handleDeregisterMember(reason string, member serf.Member) error
 		return nil
 	}
 
-	s.logger.Info("member is deregistering", log.String("node", meta.RaftAddr), log.String("reason", reason))
+	s.logger.Info("member is deregistering", log.String("node", meta.ID.String()), log.String("reason", reason))
 	req := structs.DeregisterNodeRequest{
-		Node: structs.Node{Node: meta.RaftAddr},
+		Node: structs.Node{Node: meta.ID.Int32()},
 	}
 	_, err = s.raftApply(structs.DeregisterNodeRequestType, &req)
 	return err
@@ -347,14 +350,14 @@ func (s *Broker) joinCluster(m serf.Member, parts *metadata.Broker) error {
 	}
 
 	if parts.NonVoter {
-		addFuture := s.raft.AddNonvoter(raft.ServerID(parts.RaftAddr), raft.ServerAddress(parts.RaftAddr), 0, 0)
+		addFuture := s.raft.AddNonvoter(raft.ServerID(parts.ID), raft.ServerAddress(parts.RaftAddr), 0, 0)
 		if err := addFuture.Error(); err != nil {
 			s.logger.Error("failed to add raft peer", log.Error("error", err))
 			return err
 		}
 	} else {
 		s.logger.Debug("join cluster: add voter", log.Any("member", parts))
-		addFuture := s.raft.AddVoter(raft.ServerID(parts.RaftAddr), raft.ServerAddress(parts.RaftAddr), 0, 0)
+		addFuture := s.raft.AddVoter(raft.ServerID(parts.ID), raft.ServerAddress(parts.RaftAddr), 0, 0)
 		if err := addFuture.Error(); err != nil {
 			s.logger.Error("failed to add raft peer", log.Error("error", err))
 			return err
@@ -365,9 +368,14 @@ func (s *Broker) joinCluster(m serf.Member, parts *metadata.Broker) error {
 }
 
 func (s *Broker) handleFailedMember(m serf.Member) error {
+	meta, ok := metadata.IsBroker(m)
+	if !ok {
+		return nil
+	}
+
 	req := structs.RegisterNodeRequest{
 		Node: structs.Node{
-			Node: m.Tags["raft_addr"],
+			Node: meta.ID.Int32(),
 			Check: &structs.HealthCheck{
 				Node:    m.Tags["raft_addr"],
 				CheckID: structs.SerfCheckID,
@@ -377,8 +385,111 @@ func (s *Broker) handleFailedMember(m serf.Member) error {
 			},
 		},
 	}
-	_, err := s.raftApply(structs.RegisterNodeRequestType, &req)
-	return err
+
+	if _, err := s.raftApply(structs.RegisterNodeRequestType, &req); err != nil {
+		return err
+	}
+
+	// TODO should put all the following some where else. maybe onBrokerChange or handleBrokerChange
+
+	state := s.fsm.State()
+
+	_, partitions, err := state.GetPartitions()
+	if err != nil {
+		panic(err)
+	}
+	spew.Dump("partitions before reassignment:", partitions)
+
+	// need to reassign partitions
+	_, partitions, err = state.PartitionsByLeader(meta.ID.Int32())
+	if err != nil {
+		return err
+	}
+	_, nodes, err := state.GetNodes()
+	if err != nil {
+		return err
+	}
+
+	spew.Dump("reassigning from node:", meta.ID)
+
+	// TODO: add an index for this. have same code in broker.go:handleMetadata(...)
+	var passing []*structs.Node
+	for _, n := range nodes {
+		if n.Check.Status == structs.HealthPassing && n.ID != meta.ID.Int32() {
+			passing = append(passing, n)
+		}
+	}
+
+	spew.Dump("hey")
+
+	leaderAndISRReq := &protocol.LeaderAndISRRequest{
+		ControllerID:    s.config.ID,
+		PartitionStates: make([]*protocol.PartitionState, 0, len(partitions)),
+		// TODO: LiveLeaders, ControllerEpoch
+	}
+	for _, p := range partitions {
+		i := rand.Intn(len(passing))
+		// TODO: check that old leader won't be in this list, will have been deregistered removed from fsm
+		node := passing[i]
+
+		// TODO: need to check replication factor
+
+		var ar []int32
+		for _, r := range p.AR {
+			if r != meta.ID.Int32() {
+				ar = append(ar, r)
+			}
+		}
+		var isr []int32
+		for _, r := range p.ISR {
+			if r != meta.ID.Int32() {
+				isr = append(isr, r)
+			}
+		}
+
+		// TODO: need to update epochs
+
+		req := structs.RegisterPartitionRequest{
+			Partition: structs.Partition{
+				Topic:     p.Topic,
+				ID:        p.Partition,
+				Partition: p.Partition,
+				Leader:    node.Node,
+				AR:        ar,
+				ISR:       isr,
+			},
+		}
+		if _, err = s.raftApply(structs.RegisterPartitionRequestType, req); err != nil {
+			return err
+		}
+		// TODO: need to send on leader and isr changes now i think
+		leaderAndISRReq.PartitionStates = append(leaderAndISRReq.PartitionStates, &protocol.PartitionState{
+			Topic:     p.Topic,
+			Partition: p.Partition,
+			// TODO: ControllerEpoch, LeaderEpoch, ZKVersion - lol
+			Leader:   p.Leader,
+			ISR:      p.ISR,
+			Replicas: p.AR,
+		})
+	}
+
+	// TODO: optimize this to send requests to only nodes affected
+	for _, n := range passing {
+		b := s.brokerLookup.BrokerByID(raft.ServerID(n.Node))
+		if b == nil {
+			brokers := s.brokerLookup.Brokers()
+			spew.Dump("brokers:", brokers)
+			panic(fmt.Errorf("trying to assign partitions to unknown broker: %#v", n))
+		}
+		client := NewClient(b)
+		resp, err := client.LeaderAndISR(s.config.NodeName, leaderAndISRReq)
+		if err != nil {
+			return err
+		}
+		spew.Dump("leader and isr response:", resp)
+	}
+
+	return nil
 }
 
 func (s *Broker) removeServer(m serf.Member, meta *metadata.Broker) error {
@@ -389,7 +500,7 @@ func (s *Broker) removeServer(m serf.Member, meta *metadata.Broker) error {
 	}
 	for _, server := range configFuture.Configuration().Servers {
 		s.logger.Info("removing server by id", log.Any("id", server.ID))
-		future := s.raft.RemoveServer(raft.ServerID(meta.RaftAddr), 0, 0)
+		future := s.raft.RemoveServer(raft.ServerID(meta.ID), 0, 0)
 		if err := future.Error(); err != nil {
 			s.logger.Error("failed to remove server", log.Error("error", err))
 			return err
