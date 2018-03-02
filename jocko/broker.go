@@ -310,7 +310,6 @@ func (b *Broker) handleLeaderAndISR(ctx context.Context, header *protocol.Reques
 			Topic:     p.Topic,
 		}
 	}
-	spew.Dump("leader and isr req:", req)
 	for i, p := range req.PartitionStates {
 		_, err := b.replicaLookup.Replica(p.Topic, p.Partition)
 		isNew := err != nil
@@ -445,7 +444,6 @@ func (b *Broker) handleMetadata(ctx context.Context, header *protocol.RequestHea
 	if err != nil {
 		panic(err)
 	}
-	spew.Dump("partitions:", partitions)
 
 	_, nodes, err := state.GetNodes()
 	if err != nil {
@@ -646,7 +644,6 @@ func (b *Broker) startReplica(replica *Replica) protocol.Error {
 	state := b.fsm.State()
 	// TODO: the issue with reassignment is i gotta update the fsm state, seems the topic isn't being updated...
 	_, topic, err := state.GetTopic(replica.Partition.Topic)
-	spew.Dump("topic:", topic, "node:", b.config.ID)
 	if err != nil {
 		return protocol.ErrUnknown.WithErr(err)
 	}
