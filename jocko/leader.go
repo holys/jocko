@@ -474,11 +474,10 @@ func (s *Broker) handleFailedMember(m serf.Member) error {
 	for _, n := range passing {
 		b := s.brokerLookup.BrokerByID(raft.ServerID(n.Node))
 		if b == nil {
-			brokers := s.brokerLookup.Brokers()
 			panic(fmt.Errorf("trying to assign partitions to unknown broker: %#v", n))
 		}
 		client := NewClient(b)
-		resp, err := client.LeaderAndISR(s.config.NodeName, leaderAndISRReq)
+		_, err := client.LeaderAndISR(s.config.NodeName, leaderAndISRReq)
 		if err != nil {
 			return err
 		}

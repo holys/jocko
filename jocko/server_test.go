@@ -76,7 +76,7 @@ func TestServer(t *testing.T) {
 
 		client, err := sarama.NewClient(brokers, config)
 		require.NoError(t, err)
-		require.Equal(t, 2, len(client.Brokers()))
+		require.Equal(t, 3, len(client.Brokers()))
 
 		producer, err := sarama.NewSyncProducer(brokers, config)
 		if err != nil {

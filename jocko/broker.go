@@ -440,11 +440,6 @@ func (b *Broker) handleMetadata(ctx context.Context, header *protocol.RequestHea
 	state := b.fsm.State()
 	brokers := make([]*protocol.Broker, 0, len(b.LANMembers()))
 
-	_, partitions, err := state.GetPartitions()
-	if err != nil {
-		panic(err)
-	}
-
 	_, nodes, err := state.GetNodes()
 	if err != nil {
 		panic(err)
